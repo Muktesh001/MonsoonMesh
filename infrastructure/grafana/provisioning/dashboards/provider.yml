@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: MonsoonMesh
+    orgId: 1
+    folder: MonsoonMesh
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

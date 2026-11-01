@@ -1,0 +1,152 @@
+openapi: 3.1.0
+info:
+  title: MonsoonMesh API
+  version: 0.1.0
+  description: Local decision-support API. Synthetic data and illustrative risk scores are not forecasts.
+servers:
+  - url: http://localhost:4000
+paths:
+  /health:
+    get:
+      summary: API liveness
+      responses:
+        "200":
+          description: Service is alive
+  /api/auth/login:
+    post:
+      summary: Sign in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+      responses:
+        "200":
+          description: Access token and user profile
+        "401":
+          description: Invalid credentials
+  /api/auth/register:
+    post:
+      summary: Register a field reporter account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, displayName, password]
+              properties:
+                email: { type: string, format: email }
+                displayName: { type: string, minLength: 2, maxLength: 100 }
+                password: { type: string, minLength: 12, maxLength: 128 }
+      responses:
+        "201": { description: Reporter account created and signed in }
+        "409": { description: Email is already registered }
+  /api/dashboard:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: Dashboard aggregates and recent incidents
+      responses:
+        "200": { description: Backend-derived dashboard data }
+        "401": { description: Authentication required }
+  /api/zones:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: GeoJSON risk zones
+      responses:
+        "200": { description: FeatureCollection from stored PostGIS geometries }
+  /api/incidents:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: List incidents (reporters see only their own)
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [SUBMITTED, PROCESSING, PENDING_VERIFICATION, VERIFIED, ASSIGNED, IN_PROGRESS, RESOLVED, REJECTED, DUPLICATE, REOPENED]
+      responses:
+        "200": { description: Paginated incident list }
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Submit an incident
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, description, category, latitude, longitude]
+              properties:
+                title: { type: string, minLength: 4, maxLength: 160 }
+                description: { type: string, minLength: 8, maxLength: 5000 }
+                category: { type: string, enum: [WATERLOGGING, FLOODING, DRAINAGE, ROAD_BLOCKAGE, OTHER] }
+                severity: { type: string, enum: [LOW, MODERATE, HIGH, CRITICAL], default: MODERATE }
+                latitude: { type: number, minimum: -90, maximum: 90 }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+      responses:
+        "201": { description: Incident, lifecycle event, and analysis outbox job persisted }
+        "400": { description: Request validation failed }
+  /api/incidents/{id}:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: Read an incident and its event timeline (reporters see only their own)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Incident details, timeline, evidence, and related reports }
+        "404": { description: Incident not found }
+  /api/incidents/{id}/status:
+    patch:
+      security: [{ bearerAuth: [] }]
+      summary: Operator transition for an incident
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [VERIFIED, ASSIGNED, IN_PROGRESS, RESOLVED, REJECTED, DUPLICATE, REOPENED] }
+      responses:
+        "200": { description: Updated incident and history event }
+        "403": { description: Operator role required }
+        "409": { description: Invalid lifecycle transition }
+  /api/risk/simulate:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Calculate an isolated illustrative scenario
+      responses:
+        "200": { description: Score, category, and factor contributions; never a validated probability }
+  /api/routes/plan:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Calculate a risk-penalized Dijkstra route over stored road edges
+      responses:
+        "200": { description: Estimated route; not guaranteed safe }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+__pycache__/
+.pytest_cache/
+.venv/
+uploads/*
+!uploads/.gitkeep
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
