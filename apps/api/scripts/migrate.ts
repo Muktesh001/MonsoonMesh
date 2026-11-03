@@ -1,10 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { pool } from '../src/db.js';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const migrations = path.resolve(here, '../../../database/migrations');
+const migrations = path.resolve(process.cwd(), 'database/migrations');
 await pool.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
   version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now()
 )`);
