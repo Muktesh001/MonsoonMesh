@@ -92,25 +92,19 @@ export async function ingestWeatherObservation(obs: WeatherObservation): Promise
 
   await pool.query(
     `INSERT INTO weather_observations(
-      source_id, provider_record_key, observed_at, latitude, longitude,
-      rainfall_mm, temperature_c, humidity_percent, wind_speed_kmh, is_synthetic
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false)
+      source_id, provider_record_key, observed_at, location,
+      rainfall_mm, is_synthetic
+    ) VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, $6, false)
     ON CONFLICT(source_id, provider_record_key) DO UPDATE
     SET rainfall_mm = EXCLUDED.rainfall_mm,
-        temperature_c = EXCLUDED.temperature_c,
-        humidity_percent = EXCLUDED.humidity_percent,
-        wind_speed_kmh = EXCLUDED.wind_speed_kmh,
         observed_at = EXCLUDED.observed_at`,
     [
       sourceId,
       providerKey,
       obs.timestamp,
-      obs.location.lat,
       obs.location.lon,
+      obs.location.lat,
       obs.rainfall_mm,
-      obs.temperature_c ?? null,
-      obs.humidity_percent ?? null,
-      obs.wind_speed_kmh ?? null,
     ],
   );
 }

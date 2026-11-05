@@ -135,3 +135,36 @@ export function updateIncidentStatus(
 export function runSimulation(token: string, factors: SimulationFactors): Promise<SimulationResult> {
   return request('/risk/simulate', token, { method: 'POST', body: JSON.stringify(factors) });
 }
+
+// ── External data feeds ────────────────────────────────────────────────────────
+
+export interface WeatherObservation {
+  id: string;
+  source_id: string;
+  provider_record_key: string;
+  observed_at: string;
+  latitude: number;
+  longitude: number;
+  rainfall_mm: string;
+  is_synthetic: boolean;
+}
+
+export interface RiskAssessment {
+  id: string;
+  zone_id: string;
+  zone_name: string;
+  score: number;
+  category: 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL';
+  model_version: string;
+  feature_values: Record<string, number>;
+  assessed_at: string;
+  is_synthetic: boolean;
+}
+
+export function getWeatherData(token: string): Promise<{ items: WeatherObservation[]; metadata: Record<string, unknown> }> {
+  return request('/data/weather', token);
+}
+
+export function getRiskAssessments(token: string): Promise<{ items: RiskAssessment[]; metadata: Record<string, unknown> }> {
+  return request('/data/risk-assessments', token);
+}

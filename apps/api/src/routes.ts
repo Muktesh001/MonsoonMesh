@@ -399,8 +399,10 @@ router.post('/routes/plan', authenticate, async (req, res, next) => {
 router.get('/data/weather', authenticate, async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, source_id, observed_at, latitude, longitude, rainfall_mm, 
-              temperature_c, humidity_percent, wind_speed_kmh, is_synthetic
+      `SELECT id, source_id, provider_record_key, observed_at, 
+              ST_Y(location::geometry) as latitude, 
+              ST_X(location::geometry) as longitude,
+              rainfall_mm, is_synthetic
        FROM weather_observations 
        WHERE is_synthetic = false 
        ORDER BY observed_at DESC LIMIT 100`,
@@ -462,13 +464,13 @@ router.post('/data/assess-risks', authenticate, requireRoles('ADMIN', 'OPERATOR'
 router.get('/data/sources', authenticate, async (_req, res, next) => {
   try {
     const { rows } = await pool.query(`
-      SELECT ds.id, ds.provider_key, ds.provider_name, ds.is_active,
+      SELECT ds.id, ds.provider_key, ds.name as provider_name, ds.enabled as is_active,
              COUNT(ir.id) as ingestion_runs,
              MAX(ir.completed_at) as last_ingestion
       FROM data_sources ds
       LEFT JOIN ingestion_runs ir ON ds.id = ir.source_id
-      GROUP BY ds.id, ds.provider_key, ds.provider_name, ds.is_active
-      ORDER BY ds.provider_name
+      GROUP BY ds.id, ds.provider_key, ds.name, ds.enabled
+      ORDER BY ds.name
     `);
     res.json({ 
       items: rows,
