@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import { Worker, Queue } from 'bullmq';
 import pg from 'pg';
+import { ingestAllWeatherData } from '../../../apps/api/src/services/weather-adapter.js';
+import { assessZoneRisks } from '../../../apps/api/src/services/risk-data-adapter.js';
 
 const redisUrl = new URL(process.env.REDIS_URL ?? 'redis://localhost:6379');
 const connection = {
@@ -40,6 +42,22 @@ const worker = new Worker('monsoonmesh-events', async (job) => {
     );
     return { fixtureRecorded: true };
   }
+  if (job.name === 'ingest-weather-data') {
+    const count = await ingestAllWeatherData();
+    const { rows } = await database.query(`SELECT id FROM data_sources WHERE provider_key IN ('imd', 'nasa-gpm', 'openweather') LIMIT 1`);
+    if (rows[0]) {
+      await database.query(
+        `INSERT INTO ingestion_runs(source_id,status,started_at,completed_at,records_written,metadata)
+         VALUES($1,'SUCCEEDED',now(),now(),$2,'{"mode":"external-weather-feed"}'::jsonb)`,
+        [rows[0].id, count],
+      );
+    }
+    return { weatherRecordsIngested: count };
+  }
+  if (job.name === 'assess-external-risks') {
+    const assessments = await assessZoneRisks();
+    return { risksAssessed: assessments.length };
+  }
   throw new Error(`Unsupported event type: ${job.name}`);
 }, { connection, concurrency: 3 });
 
@@ -68,6 +86,31 @@ async function pollOutbox(): Promise<void> {
 
 console.log('MonsoonMesh worker started');
 void pollOutbox();
+
+// Schedule periodic data ingestion jobs
+async function schedulePeriodicJobs(): Promise<void> {
+  // Ingest weather data every 5 minutes
+  setInterval(() => {
+    void queue.add('ingest-weather-data', {}, { 
+      repeat: { every: 300_000 }, // 5 minutes
+      jobId: 'weather-ingestion-recurring',
+      removeOnComplete: 5000,
+    });
+  }, 300_000);
+
+  // Assess risks every 10 minutes
+  setInterval(() => {
+    void queue.add('assess-external-risks', {}, { 
+      repeat: { every: 600_000 }, // 10 minutes
+      jobId: 'risk-assessment-recurring',
+      removeOnComplete: 5000,
+    });
+  }, 600_000);
+
+  console.log('Periodic jobs scheduled: weather ingestion (5m), risk assessment (10m)');
+}
+
+void schedulePeriodicJobs();
 async function shutdown(signal: string): Promise<void> {
   if (stopping) return;
   stopping = true;

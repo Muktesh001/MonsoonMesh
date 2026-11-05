@@ -12,6 +12,8 @@ import { authenticate, type AuthRequest, requireRoles } from './middleware/auth.
 import { calculateRisk } from './services/risk.js';
 import { shortestRoute, type RoadEdge } from './services/routes.js';
 import { duplicateScore, textSimilarity } from './services/duplicates.js';
+import { ingestAllWeatherData, fetchAllWeatherData } from './services/weather-adapter.js';
+import { assessZoneRisks, fetchUSGSFloodData } from './services/risk-data-adapter.js';
 
 export const router = Router();
 const loginSchema = z.object({ email: z.string().email(), password: z.string().min(8) });
@@ -388,5 +390,108 @@ router.post('/routes/plan', authenticate, async (req, res, next) => {
     const route = shortestRoute(edges, input.origin, input.destination, input.riskPenalty);
     if (!route) { res.status(404).json({ error: 'No connected route is available for the selected locations' }); return; }
     res.json({ ...route, label: 'Estimated route; not guaranteed safe' });
+  } catch (error) { next(error); }
+});
+
+
+// ─── External Data Feed Endpoints ──────────────────────────────────────
+
+router.get('/data/weather', authenticate, async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, source_id, observed_at, latitude, longitude, rainfall_mm, 
+              temperature_c, humidity_percent, wind_speed_kmh, is_synthetic
+       FROM weather_observations 
+       WHERE is_synthetic = false 
+       ORDER BY observed_at DESC LIMIT 100`,
+    );
+    res.json({ 
+      items: rows,
+      metadata: { 
+        source: 'External weather feeds (IMD, NASA GPM, OpenWeatherMap)',
+        updated: new Date(),
+        count: rows.length,
+      }
+    });
+  } catch (error) { next(error); }
+});
+
+router.get('/data/risk-assessments', authenticate, async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT r.id, r.zone_id, z.name as zone_name, r.score, r.category, 
+              r.model_version, r.feature_values, r.assessed_at, r.is_synthetic
+       FROM risk_assessments r
+       LEFT JOIN zones z ON r.zone_id = z.id
+       WHERE r.is_synthetic = false
+       ORDER BY r.assessed_at DESC LIMIT 50`,
+    );
+    res.json({ 
+      items: rows,
+      metadata: {
+        source: 'External risk models and data sources',
+        updated: new Date(),
+        count: rows.length,
+      }
+    });
+  } catch (error) { next(error); }
+});
+
+router.post('/data/ingest-weather', authenticate, requireRoles('ADMIN', 'OPERATOR'), async (_req, res, next) => {
+  try {
+    const count = await ingestAllWeatherData();
+    res.json({ 
+      message: `Weather data ingestion triggered`,
+      recordsIngested: count,
+      sources: ['IMD', 'NASA-GPM', 'OpenWeather'],
+    });
+  } catch (error) { next(error); }
+});
+
+router.post('/data/assess-risks', authenticate, requireRoles('ADMIN', 'OPERATOR'), async (_req, res, next) => {
+  try {
+    const assessments = await assessZoneRisks();
+    res.json({ 
+      message: `Risk assessment completed for ${assessments.length} zones`,
+      zones: assessments.map(a => ({ id: a.zoneId, name: a.zoneName })),
+      source: 'External integrated data',
+    });
+  } catch (error) { next(error); }
+});
+
+router.get('/data/sources', authenticate, async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT ds.id, ds.provider_key, ds.provider_name, ds.is_active,
+             COUNT(ir.id) as ingestion_runs,
+             MAX(ir.completed_at) as last_ingestion
+      FROM data_sources ds
+      LEFT JOIN ingestion_runs ir ON ds.id = ir.source_id
+      GROUP BY ds.id, ds.provider_key, ds.provider_name, ds.is_active
+      ORDER BY ds.provider_name
+    `);
+    res.json({ 
+      items: rows,
+      availableSources: [
+        { key: 'imd', name: 'India Meteorological Department', status: 'configured' },
+        { key: 'nasa-gpm', name: 'NASA GPM', status: 'configured' },
+        { key: 'openweather', name: 'OpenWeatherMap', status: 'configured' },
+        { key: 'usgs', name: 'USGS Flood Data', status: 'available' },
+      ]
+    });
+  } catch (error) { next(error); }
+});
+
+router.get('/data/ingestion-history', authenticate, async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT ir.id, ds.provider_name, ir.status, ir.records_written,
+             ir.started_at, ir.completed_at, ir.metadata
+      FROM ingestion_runs ir
+      LEFT JOIN data_sources ds ON ir.source_id = ds.id
+      ORDER BY ir.completed_at DESC
+      LIMIT 50
+    `);
+    res.json({ items: rows });
   } catch (error) { next(error); }
 });
