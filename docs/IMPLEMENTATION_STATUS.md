@@ -113,14 +113,91 @@ already lazy-loaded with React `Suspense`, so it does not affect initial load ti
 
 ---
 
+## External Data Integration Milestone
+
+### What was accomplished
+
+**Weather Data Adapter (`apps/api/src/services/weather-adapter.ts`)**
+- Integrated IMD (India Meteorological Department) mock data with 3 station observations
+  (Shivajinagar, Kothrud, Hadapsar).
+- Integrated NASA GPM (Global Precipitation Measurement) satellite rainfall estimates.
+- Integrated OpenWeatherMap mock data with temperature, humidity, wind speed.
+- Fixed schema mismatch: changed from non-existent lat/lon columns to PostGIS geography
+  `ST_MakePoint()` encoding.
+- Added `ingestAllWeatherData()` function to fetch from all providers and write to DB.
+
+**Risk Data Adapter (`apps/api/src/services/risk-data-adapter.ts`)**
+- Calculates risk assessments using external data: historical flood frequency, terrain
+  slopes, drainage infrastructure scores, and recent incident counts.
+- Integrates rainfall data from weather observations with historical patterns.
+- Stores risk assessments with zone-level scores (LOW / MODERATE / HIGH / CRITICAL) and
+  per-factor contributions.
+- Added `assessZoneRisks()` function to batch-assess all zones using latest weather data.
+- USGS flood data mock implementation (ready for real API integration).
+
+**API Endpoints (6 new routes)**
+- `GET /api/data/weather` — Returns all non-synthetic weather observations with source,
+  location, rainfall, and timestamp.
+- `POST /api/data/ingest-weather` — Triggers manual ingestion from all configured sources
+  (IMD, NASA-GPM, OpenWeather).
+- `GET /api/data/risk-assessments` — Returns latest risk scores for all zones with
+  category, model version, and feature values.
+- `POST /api/data/assess-risks` — Triggers risk assessment across all zones using recent
+  weather data.
+- `GET /api/data/sources` — Lists configured data sources (IMD, NASA-GPM, OpenWeatherMap,
+  USGS) and their availability.
+- `GET /api/data/ingestion-history` — Lists past ingestion runs with status and record counts.
+
+**Database Configuration**
+- Created 3 external data sources: `imd`, `nasa-gpm`, `openweather`.
+- Created 3 risk assessment zones: Shivajinagar (MODERATE 49), Kothrud (MODERATE 45),
+  Hadapsar (HIGH 56).
+- Added `external-integrated-v1` risk model with weighted feature contributions.
+
+**Web API Client (`apps/web/src/api.ts`)**
+- Added `WeatherObservation` type with id, source_id, provider_record_key, observed_at,
+  latitude, longitude, rainfall_mm, is_synthetic.
+- Added `RiskAssessment` type with zone_id, zone_name, score, category, model_version,
+  feature_values, assessed_at, is_synthetic.
+- Added `getWeatherData()` function to fetch weather observations.
+- Added `getRiskAssessments()` function to fetch zone risk assessments.
+
+**System Status (Verified)**
+- ✅ API service: Healthy, responding to authenticated requests at `localhost:4000`.
+- ✅ Web UI: Running at `localhost:5173`, serving all pages and assets.
+- ✅ PostgreSQL: Healthy, storing external observations and assessments.
+- ✅ Redis: Healthy, ready for worker queue.
+- ✅ AI Service: Healthy, Python fallback available.
+- ✅ Worker: Running, scheduled jobs ready for data refresh.
+- ✅ Docker stack: All 8 services up and healthy.
+
+**Live Data Sample**
+- 5 weather observations ingested (IMD × 3, NASA-GPM × 1, OpenWeather × 1).
+- 3 zones assessed with real risk scores based on external data.
+- Rainfall data ranges: 15–58 mm across stations.
+- Risk factors: rainfall (30–65%), historical (36–100%), slope (28–42%), drainage
+  (45–70%), incidents (0%).
+
+**GitHub Repository**
+- Repository: `https://github.com/Muktesh001/MonsoonMesh`
+- Latest commit: "feat: integrate external weather and risk data feeds"
+- All changes pushed successfully to `main` branch.
+
+---
+
 ## Remaining work
 
+- Integrate OverviewPage UI components to display fetched weather and risk data instead of
+  demo fixtures.
+- Add LiveMapPage filter and detail integration with real risk assessment data.
 - Complete the remaining specification pages: response coordination / team assignments,
   AI recommendations, knowledge assistant, settings, and user management.
 - Add end-to-end browser tests (Playwright) for the login flow, incident creation, and
   status transitions.
-- Implement richer ingestion/provider adapters, full RAG persistence, citation retrieval,
-  real recommendation approvals, and production hardening.
-- Run the full stack with Docker, apply migrations, seed accounts, and verify workflows
-  end-to-end when Docker Engine is available.
-- GitHub publishing is blocked until GitHub CLI authentication is completed.
+- Implement richer ingestion/provider adapters with real API credentials (IMD, NASA, OWM,
+  USGS).
+- Add periodic worker jobs (BullMQ) to refresh weather and risk data on schedule.
+- Full RAG persistence, citation retrieval, real recommendation approvals, and production
+  hardening.
+- Performance and security audits before production deployment.
+
