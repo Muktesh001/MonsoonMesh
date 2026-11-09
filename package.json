@@ -12,6 +12,12 @@
     "dev:api": "npm run dev -w apps/api",
     "dev:worker": "npm run dev -w apps/worker",
     "build": "npm run build -w apps/api && npm run build -w apps/worker && npm run build -w apps/web",
-    "test": "npm run test -w apps/api"
+    "test": "npm run test -w apps/api",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:debug": "playwright test --debug"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
   }
 }

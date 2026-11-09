@@ -8,12 +8,17 @@ import path from 'node:path';
 import { z } from 'zod';
 import { config } from './config.js';
 import { pool } from './db.js';
+import { createChildLogger } from './logger.js';
 import { authenticate, type AuthRequest, requireRoles } from './middleware/auth.js';
 import { calculateRisk } from './services/risk.js';
 import { shortestRoute, type RoadEdge } from './services/routes.js';
 import { duplicateScore, textSimilarity } from './services/duplicates.js';
 import { ingestAllWeatherData, fetchAllWeatherData } from './services/weather-adapter.js';
 import { assessZoneRisks, fetchUSGSFloodData } from './services/risk-data-adapter.js';
+import { logAuthEvent, logIncidentStatusChange, logIncidentCreation, logEvidenceUpload } from './services/audit.js';
+import { websocketService } from './services/websocket.js';
+
+const logger = createChildLogger('routes');
 
 export const router = Router();
 const loginSchema = z.object({ email: z.string().email(), password: z.string().min(8) });
@@ -35,6 +40,7 @@ const validateUuidParam = (name: string) => (req: Request, res: Response, next: 
 
 router.post('/auth/login', async (req, res, next) => {
   try {
+    const requestId = res.getHeader('X-Request-ID') as string;
     const input = loginSchema.parse(req.body);
     const result = await pool.query(
       'SELECT id, email, password_hash, role, display_name FROM users WHERE lower(email) = lower($1) AND is_active = true',
@@ -42,16 +48,20 @@ router.post('/auth/login', async (req, res, next) => {
     );
     const user = result.rows[0] as { id: string; email: string; password_hash: string; role: string; display_name: string } | undefined;
     if (!user || !(await bcrypt.compare(input.password, user.password_hash))) {
+      await logAuthEvent(null, 'LOGIN_FAILED', requestId, { email: input.email, reason: 'invalid_credentials' });
       res.status(401).json({ error: 'Invalid email or password' });
       return;
     }
     const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, config.jwtSecret, { expiresIn: '8h' });
+    await logAuthEvent(user.id, 'LOGIN_SUCCESS', requestId, { email: user.email, role: user.role });
+    logger.info('User login successful', { userId: user.id, email: user.email, role: user.role });
     res.json({ token, user: { id: user.id, email: user.email, role: user.role, displayName: user.display_name } });
   } catch (error) { next(error); }
 });
 
 router.post('/auth/register', async (req, res, next) => {
   try {
+    const requestId = res.getHeader('X-Request-ID') as string;
     const input = z.object({
       email: z.string().email().max(254),
       displayName: z.string().trim().min(2).max(100),
@@ -66,6 +76,8 @@ router.post('/auth/register', async (req, res, next) => {
     );
     const user = rows[0] as { id: string; email: string; display_name: string; role: string };
     const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, config.jwtSecret, { expiresIn: '8h' });
+    await logAuthEvent(user.id, 'REGISTRATION', requestId, { email: user.email });
+    logger.info('User registration successful', { userId: user.id, email: user.email });
     res.status(201).json({ token, user: { id: user.id, email: user.email, role: user.role, displayName: user.display_name } });
   } catch (error) {
     if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') {
@@ -157,6 +169,7 @@ router.get('/incidents/:id', authenticate, validateUuidParam('id'), async (req: 
 router.post('/incidents', authenticate, async (req: AuthRequest, res, next) => {
   const client = await pool.connect();
   try {
+    const requestId = res.getHeader('X-Request-ID') as string;
     const input = incidentSchema.parse(req.body);
     await client.query('BEGIN');
     const { rows } = await client.query(
@@ -177,6 +190,12 @@ router.post('/incidents', authenticate, async (req: AuthRequest, res, next) => {
       [JSON.stringify({ incident_id: incident.id, title: input.title, description: input.description, category: input.category })],
     );
     await client.query('COMMIT');
+    await logIncidentCreation(incident.id, req.user!.id, requestId, {
+      category: input.category,
+      severity: input.severity,
+      location: { lat: input.latitude, lon: input.longitude },
+    });
+    logger.info('Incident created', { incidentId: incident.id, category: input.category, severity: input.severity, reporter: req.user!.id });
     res.status(201).json({ incident });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -196,6 +215,7 @@ const transitions: Record<string, string[]> = {
 router.patch('/incidents/:id/status', authenticate, validateUuidParam('id'), requireRoles('ADMIN', 'OPERATOR'), async (req: AuthRequest, res, next) => {
   const client = await pool.connect();
   try {
+    const requestId = res.getHeader('X-Request-ID') as string;
     const status = z.enum(['VERIFIED','ASSIGNED','IN_PROGRESS','RESOLVED','REJECTED','DUPLICATE','REOPENED']).parse(req.body.status);
     await client.query('BEGIN');
     const existing = await client.query('SELECT status FROM incidents WHERE id=$1 FOR UPDATE', [req.params.id]);
@@ -212,9 +232,24 @@ router.patch('/incidents/:id/status', authenticate, validateUuidParam('id'), req
     await client.query(
       `INSERT INTO audit_logs(actor_id,action,entity_type,entity_id,request_id,details)
        VALUES($1,'INCIDENT_STATUS_CHANGED','incident',$2,$3,$4)`,
-      [req.user!.id, req.params.id, res.getHeader('X-Request-ID'), JSON.stringify({ from: prior, to: status })],
+      [req.user!.id, req.params.id, requestId, JSON.stringify({ from: prior, to: status })],
     );
     await client.query('COMMIT');
+    await logIncidentStatusChange(req.params.id as string, req.user!.id, prior, status, requestId);
+    logger.info('Incident status changed', { incidentId: req.params.id, from: prior, to: status, operator: req.user!.id });
+    
+    // Broadcast incident update via WebSocket
+    const incident = rows[0] as { id: string; status: string };
+    websocketService.broadcastIncidentUpdate({
+      id: incident.id,
+      status: incident.status,
+      title: '', // These would be fetched from the database in production
+      severity: '',
+      category: '',
+      updatedAt: new Date().toISOString(),
+      change: { field: 'status', oldValue: prior, newValue: status },
+    });
+    
     res.json({ incident: rows[0] });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -241,6 +276,7 @@ const upload = multer({
 router.post('/incidents/:id/evidence', authenticate, validateUuidParam('id'), upload.single('file'), async (req: AuthRequest, res, next) => {
   let uploadedPath: string | undefined;
   try {
+    const requestId = res.getHeader('X-Request-ID') as string;
     if (!req.file) { res.status(400).json({ error: 'An image file is required' }); return; }
     uploadedPath = req.file.path;
     const incidentResult = await pool.query('SELECT reporter_id FROM incidents WHERE id=$1', [req.params.id]);
@@ -275,9 +311,11 @@ router.post('/incidents/:id/evidence', authenticate, validateUuidParam('id'), up
       [req.params.id, req.user!.id, storageKey, detectedType, req.file.size],
     );
     uploadedPath = undefined;
+    await logEvidenceUpload(req.params.id as string, rows[0].id, req.user!.id, requestId);
+    logger.info('Evidence uploaded', { incidentId: req.params.id, evidenceId: rows[0].id, mediaType: detectedType, size: req.file.size, uploader: req.user!.id });
     res.status(201).json({ evidenceId: rows[0].id });
   } catch (error) {
-    if (uploadedPath) await fs.promises.unlink(uploadedPath).catch((cleanupError: unknown) => console.error('Upload cleanup failed:', cleanupError));
+    if (uploadedPath) await fs.promises.unlink(uploadedPath).catch((cleanupError: unknown) => logger.error('Upload cleanup failed', { error: cleanupError }));
     next(error);
   }
 });
@@ -441,7 +479,10 @@ router.get('/data/risk-assessments', authenticate, async (_req, res, next) => {
 
 router.post('/data/ingest-weather', authenticate, requireRoles('ADMIN', 'OPERATOR'), async (_req, res, next) => {
   try {
+    const requestId = res.getHeader('X-Request-ID') as string;
+    logger.info('Weather data ingestion started', { requestId });
     const count = await ingestAllWeatherData();
+    logger.info('Weather data ingestion completed', { requestId, recordsIngested: count });
     res.json({ 
       message: `Weather data ingestion triggered`,
       recordsIngested: count,
@@ -452,7 +493,10 @@ router.post('/data/ingest-weather', authenticate, requireRoles('ADMIN', 'OPERATO
 
 router.post('/data/assess-risks', authenticate, requireRoles('ADMIN', 'OPERATOR'), async (_req, res, next) => {
   try {
+    const requestId = res.getHeader('X-Request-ID') as string;
+    logger.info('Risk assessment started', { requestId });
     const assessments = await assessZoneRisks();
+    logger.info('Risk assessment completed', { requestId, zonesAssessed: assessments.length });
     res.json({ 
       message: `Risk assessment completed for ${assessments.length} zones`,
       zones: assessments.map(a => ({ id: a.zoneId, name: a.zoneName })),

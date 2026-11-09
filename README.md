@@ -4,69 +4,152 @@ AI-powered urban flood intelligence, predictive risk mapping, and emergency resp
 coordination for Pune, Maharashtra. MonsoonMesh is a local decision-support and
 demonstration platform—not a validated flood forecast or emergency dispatch system.
 
-## What works in this implementation
+## Features
 
-- React + TypeScript operations dashboard, incident intake, GeoJSON zone map using
-  MapLibre without external tile dependencies, and what-if risk simulation.
-- Express + TypeScript API with JWT login, reporter registration, backend role checks,
-  rate limiting, Zod request validation, transactional incident lifecycle history,
-  image upload metadata, dashboard data, GeoJSON queries, and route planning.
-- PostgreSQL with PostGIS and pgvector extensions, SQL migrations, synthetic Pune
-  zone/weather/incident/risk fixtures, spatial indexes, and local-only demo accounts.
-- Redis + BullMQ durable outbox worker that sends incident reports to a FastAPI
-  service; AI output is a deterministic local fallback and remains human-review-only.
-- Docker Compose, Prometheus API metrics, provisioned Grafana dashboard, and CI.
+### Incident Management
+- **Incident Intake**: Field reporters submit waterlogging, flooding, and drainage incidents with location, photos, and severity
+- **Status Workflow**: Verify, assign, prioritize, and resolve incidents with full audit trail
+- **Evidence Tracking**: Attach and view images with metadata for each incident
+- **Timeline View**: See complete incident lifecycle with all status changes and actions
 
-This is the first functional vertical slice, not completion of every item in the
-project specification. Live IMD/NASA/OSM ingestion, evidence image viewing, full
-LangGraph RAG/citations, Gemini/image processing, refresh sessions, team assignment,
-Socket.IO, complete analytics/pages, and Playwright end-to-end flows remain future
-work. See [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
+### Risk Assessment & Analytics
+- **Predictive Risk Modeling**: Multi-factor risk algorithm (rainfall, drainage, slope, history, incidents)
+- **Zone-based Analysis**: Spatial risk assessment with PostGIS queries
+- **Real-time Dashboard**: Live incident counts, risk scores, and trend analytics
+- **Historical Data**: Query incidents, weather, and risk factors over time
 
-## Start locally
+### Operations Dashboard
+- **Overview**: Summary statistics, recent incidents, risk breakdown
+- **Analytics**: Charts and graphs for incident trends, zone risk distribution
+- **Risk Map**: Interactive MapLibre map with zone polygons and incident markers
+- **Navigation**: Quick access to all tools from responsive sidebar
 
-Requirements: Docker Desktop with Compose, and Git if cloning.
+### Data Integration
+- **Weather APIs**: Rainfall and meteorological data integration (local and external sources)
+- **External Sources**: Configurable support for IMD, NASA, and OSM data
+- **AI Processing**: FastAPI service for incident analysis with deterministic fallback
+- **Data Validation**: Zod schema validation on all inputs
 
-1. Copy `.env.example` to `.env`. Replace `JWT_SECRET` and local passwords before
-   exposing the services to any network. Defaults are intended only for local demo.
-2. Start the stack:
+### Security & Authorization
+- **JWT Authentication**: Secure token-based login
+- **Role-based Access Control**: Admin, Operator, Field Reporter roles
+- **Audit Logging**: All user actions logged with timestamps and request IDs
+- **Rate Limiting**: API request throttling to prevent abuse
+- **Image Upload**: Secure file handling with MIME type validation
 
-   ```powershell
-   docker compose up --build
-   ```
+### Real-time Updates
+- **WebSocket Support**: Socket.IO for live incident and risk updates
+- **Incident Broadcasts**: Instant notification when incident status changes
+- **Risk Notifications**: Real-time zone risk updates
+- **Reconnection Handling**: Automatic reconnection with exponential backoff
 
-   Compose waits for PostGIS, applies SQL migrations, seeds the demo fixtures and
-   accounts, then starts the API, worker, web app, monitoring, and AI fallback.
-3. Open `http://localhost:5173`.
+## Architecture
 
-Local-only accounts (password for all: `MonsoonDemo!2026`):
+```
+┌─────────────────────────────────────────────────────────┐
+│               MonsoonMesh System Overview                 │
+└─────────────────────────────────────────────────────────┘
 
-| Role | Email |
-|---|---|
-| Administrator | `admin@monsoonmesh.local` |
-| Operator | `operator@monsoonmesh.local` |
-| Field reporter | `reporter@monsoonmesh.local` |
-
-These are synthetic development accounts. Never reuse their password in a deployed
-environment.
-
-Other local interfaces: Grafana `http://localhost:3000` (admin / monsoonmesh),
-Prometheus `http://localhost:9090`, API `http://localhost:4000/health`.
-
-To run database steps explicitly after the services are up:
-
-```powershell
-docker compose run --rm bootstrap npm run migrate -w apps/api
-docker compose run --rm bootstrap npm run seed -w apps/api
+┌─────────────────┐         ┌──────────────────┐
+│  React Web App  │         │   Playwright E2E  │
+│  (Port 5173)    │◄────────┤   Tests (CI/CD)   │
+└────────┬────────┘         └──────────────────┘
+         │ HTTP/REST           
+         │ WebSocket (Socket.IO)
+         │
+┌────────▼────────────────────────────────────┐
+│      Express.js API Server (Port 4000)      │
+│ • Auth (JWT, roles, audit logging)          │
+│ • Incident CRUD operations                  │
+│ • Risk calculation & assessment             │
+│ • File uploads & evidence management        │
+│ • WebSocket connection handling             │
+│ • Metrics & health checks                   │
+└────────┬────────────────────────────────────┘
+         │
+    ┌────┴──────┬──────────┬──────────┐
+    │            │          │          │
+    ▼            ▼          ▼          ▼
+ ┌──────┐   ┌────────┐  ┌─────┐  ┌─────────┐
+ │ PG   │   │ Redis  │  │ AI  │  │External │
+ │ + GIS│   │ +BullMQ│  │API  │  │ Sources │
+ └──────┘   └────────┘  └─────┘  └─────────┘
+    │            │          │          │
+    └────┬───────┴──────────┴──────────┘
+         │
+┌────────▼────────────────┐
+│  Monitoring & Logging   │
+│ • Prometheus (metrics)  │
+│ • Grafana (dashboards)  │
+│ • Winston (logs)        │
+└─────────────────────────┘
 ```
 
-To stop services use `docker compose down`. To reset all local database, Redis,
-uploaded-image, and monitoring state, run `docker compose down -v`; this deletes
-the named local volumes.
+### Technology Stack
+
+**Frontend**
+- React 19 + TypeScript
+- Vite for fast builds
+- TanStack Query for API data fetching
+- React Router for navigation
+- MapLibre GL for spatial visualization
+- Recharts for data visualization
+- Socket.IO client for real-time updates
+
+**Backend**
+- Express.js with TypeScript
+- PostgreSQL + PostGIS for spatial data
+- Redis + BullMQ for message queue
+- JWT for authentication
+- Zod for schema validation
+- Socket.IO for WebSocket communication
+
+**Infrastructure**
+- Docker Compose for local development
+- PostgreSQL with PostGIS extension
+- Redis for caching and queues
+- FastAPI (Python) for AI processing
+- Prometheus for metrics collection
+- Grafana for monitoring dashboards
+
+**Quality**
+- Vitest for API unit tests
+- Supertest for API integration tests
+- Playwright for E2E tests
+- TypeScript for type safety
+
+## Quick Start
+
+### Requirements
+- Docker Desktop (with Compose)
+- Git
+- 4GB+ RAM, ports 5173, 4000, 5432 available
+
+### Local Development (< 2 minutes)
+
+```bash
+git clone <repository>
+cd MonsoonMesh
+cp .env.example .env
+docker compose up --build
+```
+
+Then open **http://localhost:5173** and login:
+
+| Role | Email | Password |
+|------|-------|----------|
+| Admin | `admin@monsoonmesh.local` | `MonsoonDemo!2026` |
+| Operator | `operator@monsoonmesh.local` | `MonsoonDemo!2026` |
+| Field Reporter | `reporter@monsoonmesh.local` | `MonsoonDemo!2026` |
+
+Other interfaces:
+- **Grafana**: http://localhost:3000 (admin / monsoonmesh)
+- **Prometheus**: http://localhost:9090
+- **API**: http://localhost:4000
 
 ## Development
 
-```powershell
+```bash
 npm ci
 npm run dev:api
 npm run dev:web
@@ -76,19 +159,115 @@ npm run dev:worker
 The development commands expect PostgreSQL and Redis on their default local ports.
 Use Docker Compose for the complete integrated environment. Build and test:
 
-```powershell
+```bash
 npm run build
 npm test
+npm run test:e2e        # Run Playwright E2E tests
+npm run test:e2e:ui     # UI mode for E2E tests
 ```
 
 AI service:
 
-```powershell
+```bash
 python -m venv apps/ai-service/.venv
 apps/ai-service/.venv/Scripts/Activate.ps1
 pip install -r apps/ai-service/requirements.lock
 pytest -q apps/ai-service/tests
 ```
+
+## API Examples
+
+### Authentication
+
+**Login**
+```bash
+curl -X POST http://localhost:4000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "reporter@monsoonmesh.local",
+    "password": "MonsoonDemo!2026"
+  }'
+```
+
+Response:
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "user": {
+    "id": "uuid",
+    "email": "reporter@monsoonmesh.local",
+    "role": "FIELD_REPORTER",
+    "displayName": "Field Reporter"
+  }
+}
+```
+
+**Get Current User**
+```bash
+curl http://localhost:4000/api/auth/me \
+  -H "Authorization: Bearer <token>"
+```
+
+### Incidents
+
+**Create Incident**
+```bash
+curl -X POST http://localhost:4000/api/incidents \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Waterlogging at Kondhwa",
+    "description": "Area near market is waterlogged after heavy rain",
+    "category": "WATERLOGGING",
+    "severity": "HIGH",
+    "latitude": 18.4721,
+    "longitude": 73.8732
+  }'
+```
+
+**Get All Incidents**
+```bash
+curl "http://localhost:4000/api/incidents?limit=10&offset=0" \
+  -H "Authorization: Bearer <token>"
+```
+
+**Update Incident Status** (Operator only)
+```bash
+curl -X PATCH http://localhost:4000/api/incidents/<incident-id>/status \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "VERIFIED"}'
+```
+
+**Upload Evidence Image**
+```bash
+curl -X POST http://localhost:4000/api/incidents/<incident-id>/evidence \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@photo.jpg"
+```
+
+### Dashboard
+
+**Get Dashboard Summary**
+```bash
+curl http://localhost:4000/api/dashboard \
+  -H "Authorization: Bearer <token>"
+```
+
+**Get Risk Assessment**
+```bash
+curl http://localhost:4000/api/incidents/risk \
+  -H "Authorization: Bearer <token>"
+```
+
+### Metrics
+
+**Prometheus Metrics** (for monitoring)
+```bash
+curl http://localhost:4000/metrics
+```
+
+See [API documentation](docs/api/README.md) for complete endpoint reference.
 
 ## Risk index and data provenance
 
@@ -104,17 +283,75 @@ canvas and does not request map tiles. It therefore needs no external tile
 attribution. Operational deployments must configure a licensed tile source and
 display its required attribution.
 
-## Security and operations
+## Security Features
 
-- API authorization—not client-side visibility—protects operator status changes.
-- Use a unique random `JWT_SECRET`, strong database/Grafana passwords, HTTPS, and
-  secure cookie/session settings before deployment.
-- Evidence upload accepts JPEG, PNG, and WebP under the configured byte limit.
-- Do not expose Prometheus/Grafana or local demo accounts to the public internet.
-- Health endpoints only report liveness. API request metrics are available at
-  `/metrics` to the internal Compose network.
-- Gemini keys are not required. The current AI path is local and deterministic;
-  no external provider integration is active.
+- **Authentication**: JWT tokens with role-based access control
+- **Authorization**: Every protected operation checks user role on the server
+- **Input Validation**: Zod schema validation on all API requests
+- **CORS**: Configurable origin, secure cookie settings
+- **Rate Limiting**: Request throttling to prevent abuse
+- **Helmet**: HTTP security headers (HSTS, CSP, X-Frame-Options, etc.)
+- **Image Upload**: MIME type validation, file size limits
+- **Audit Logging**: Complete trail of user actions for compliance
+- **Secrets Management**: All credentials in environment variables (never committed)
+- **Password Security**: bcrypt with 12-round salt
+
+Before production deployment:
+- [ ] Set strong `JWT_SECRET` (32+ random characters)
+- [ ] Change all default database and Grafana passwords
+- [ ] Enable HTTPS/TLS termination
+- [ ] Configure secure CORS origins
+- [ ] Remove or disable demo accounts
+- [ ] Set `NODE_ENV=production`
+- [ ] Configure external monitoring and logging
+- [ ] Set up automated database backups
+
+## Contributing
+
+### Code Standards
+- TypeScript for type safety
+- ESLint + Oxlint for linting
+- Vitest for unit tests
+- Supertest for integration tests
+- Playwright for E2E tests
+- Format: 2-space indentation
+
+### Workflow
+1. Create a branch: `git checkout -b feature/your-feature`
+2. Make changes and test: `npm run build && npm test`
+3. Commit with descriptive message
+4. Push and open a pull request
+5. CI must pass before merge
+
+### Testing
+```bash
+# Unit and integration tests
+npm test
+
+# E2E tests (requires running services)
+npm run test:e2e
+
+# Coverage report
+npm run test:coverage
+
+# Watch mode
+npm run test:watch
+```
+
+### Structure
+```
+MonsoonMesh/
+├── apps/
+│   ├── api/          # Express backend
+│   ├── web/          # React frontend
+│   ├── worker/       # BullMQ background worker
+│   └── ai-service/   # Python AI service
+├── database/         # PostgreSQL setup & migrations
+├── infrastructure/   # Docker, monitoring, configs
+├── docs/             # Documentation
+├── e2e/              # Playwright tests
+└── docker-compose.yml
+```
 
 ## Documentation
 

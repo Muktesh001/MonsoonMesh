@@ -8,7 +8,8 @@ import { OverviewPage } from './pages/OverviewPage.tsx';
 import { IncidentsPage } from './pages/IncidentsPage.tsx';
 import { LiveMapPage } from './pages/LiveMapPage.tsx';
 import { SimulationPage } from './pages/SimulationPage.tsx';
-import { PlaceholderPage } from './pages/PlaceholderPage.tsx';
+import { RiskAnalysisPage } from './pages/RiskAnalysisPage.tsx';
+import { AnalyticsPage } from './pages/AnalyticsPage.tsx';
 
 function App() {
   const [token, setToken] = useState<string>(() => localStorage.getItem('mm-token') ?? '');
@@ -87,8 +88,12 @@ function App() {
         <SimulationPage token={token} />
       )}
 
-      {(page === 'Risk analysis' || page === 'Analytics') && (
-        <PlaceholderPage page={page} token={token} onNavigate={setPage} />
+      {page === 'Risk analysis' && (
+        <RiskAnalysisPage token={token} onNavigate={setPage} />
+      )}
+
+      {page === 'Analytics' && (
+        <AnalyticsPage token={token} />
       )}
     </AppShell>
   );

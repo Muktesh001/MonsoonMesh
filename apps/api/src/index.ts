@@ -1,9 +1,15 @@
+import { createServer } from 'node:http';
 import { app } from './app.js';
 import { config } from './config.js';
 import { pool } from './db.js';
+import { websocketService } from './services/websocket.js';
 
-const server = app.listen(config.port, () => {
+const httpServer = createServer(app);
+websocketService.init(httpServer);
+
+const server = httpServer.listen(config.port, () => {
   console.log(`MonsoonMesh API listening on port ${config.port}`);
+  console.log(`WebSocket server initialized`);
 });
 
 async function shutdown(signal: string): Promise<void> {

@@ -168,3 +168,78 @@ export function getWeatherData(token: string): Promise<{ items: WeatherObservati
 export function getRiskAssessments(token: string): Promise<{ items: RiskAssessment[]; metadata: Record<string, unknown> }> {
   return request('/data/risk-assessments', token);
 }
+
+// ── Analytics ──────────────────────────────────────────────────────────────
+
+export interface AnalyticsMetrics {
+  totalIncidents: number;
+  weatherEvents: number;
+  riskAssessments: number;
+  avgResolutionTime: number;
+  medianResolutionTime: number;
+  timestamp: string;
+}
+
+export interface IncidentTrend {
+  week: string;
+  incidents: number;
+}
+
+export interface WeatherTrend {
+  week: string;
+  rainfall: number;
+  observations: number;
+}
+
+export interface AnalyticsTrends {
+  incidentTrends: IncidentTrend[];
+  weatherTrends: WeatherTrend[];
+}
+
+export interface RiskZoneData {
+  name: string;
+  score: number;
+  category: 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL';
+  assessed_at: string;
+  factors: Record<string, number>;
+}
+
+export interface RiskDistribution {
+  zones: RiskZoneData[];
+}
+
+export interface ResponseStats {
+  byStatus: {
+    status: string;
+    count: number;
+    avgResolutionHours: number;
+    medianResolutionHours: number;
+  }[];
+}
+
+export interface UptimeStatus {
+  status: string;
+  apiResponseTime: string;
+  databaseConnected: boolean;
+  timestamp: string;
+}
+
+export function getAnalyticsMetrics(token: string): Promise<AnalyticsMetrics> {
+  return request('/analytics/metrics', token);
+}
+
+export function getAnalyticsTrends(token: string): Promise<AnalyticsTrends> {
+  return request('/analytics/trends', token);
+}
+
+export function getRiskDistribution(token: string): Promise<RiskDistribution> {
+  return request('/analytics/risk-distribution', token);
+}
+
+export function getResponseStats(token: string): Promise<ResponseStats> {
+  return request('/analytics/response-stats', token);
+}
+
+export function getUptimeStatus(token: string): Promise<UptimeStatus> {
+  return request('/analytics/uptime', token);
+}
