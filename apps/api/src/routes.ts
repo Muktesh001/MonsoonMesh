@@ -438,8 +438,8 @@ router.get('/data/weather', authenticate, async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
       `SELECT id, source_id, provider_record_key, observed_at, 
-              ST_Y(location::geometry) as latitude, 
-              ST_X(location::geometry) as longitude,
+              ST_Y(location::point) as latitude, 
+              ST_X(location::point) as longitude,
               rainfall_mm, is_synthetic
        FROM weather_observations 
        WHERE is_synthetic = false 
