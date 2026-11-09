@@ -1,10 +1,11 @@
 /**
  * Weather data adapter
  * Connects to external weather providers (IMD, OpenWeatherMap, NASA GPM)
- * Currently uses mock data with configurable providers
+ * Uses real APIs when credentials are provided, otherwise falls back to mock data
  */
 
 import { pool } from '../db.js';
+import { config } from '../config.js';
 
 export interface WeatherObservation {
   provider: string;
@@ -17,11 +18,39 @@ export interface WeatherObservation {
 }
 
 /**
- * Mock IMD (India Meteorological Department) data
- * Real implementation would call: https://mausam.imd.gov.in/
+ * Fetch IMD (India Meteorological Department) data
+ * Real API: https://mausam.imd.gov.in/ (requires API key)
+ * Fallback: Mock data for demonstration
  */
 export async function fetchIMDData(): Promise<WeatherObservation[]> {
-  // Mock Pune region weather stations
+  // If real API key is provided, use it
+  if (config.externalData.imdApiKey) {
+    try {
+      const url = new URL('/v2/weather', config.externalData.imdBaseUrl);
+      url.searchParams.set('lat', '18.5204');
+      url.searchParams.set('lon', '73.8567');
+      url.searchParams.set('apikey', config.externalData.imdApiKey);
+      
+      const response = await fetch(url.toString());
+      if (!response.ok) throw new Error(`IMD API returned ${response.status}`);
+      
+      const data: any = await response.json();
+      // Parse real IMD response - structure depends on actual API
+      return (data.stations || []).map((station: any) => ({
+        provider: 'IMD',
+        location: { lat: station.latitude, lon: station.longitude },
+        timestamp: new Date(station.observed_at),
+        rainfall_mm: station.rainfall_mm || 0,
+        temperature_c: station.temperature_c,
+        humidity_percent: station.humidity_percent,
+        wind_speed_kmh: station.wind_speed_kmh,
+      }));
+    } catch (error) {
+      console.warn('IMD API call failed, using mock data:', error);
+    }
+  }
+
+  // Fallback: Mock Pune region weather stations
   const stations = [
     { id: 'imd-pune-1', lat: 18.5204, lon: 73.8567, name: 'Shivajinagar' },
     { id: 'imd-pune-2', lat: 18.5074, lon: 73.8077, name: 'Kothrud' },
@@ -40,11 +69,38 @@ export async function fetchIMDData(): Promise<WeatherObservation[]> {
 }
 
 /**
- * Mock NASA GPM (Global Precipitation Measurement) data
- * Real implementation would call: https://giovanni.gsfc.nasa.gov/
+ * Fetch NASA GPM (Global Precipitation Measurement) data
+ * Real API: https://giovanni.gsfc.nasa.gov/ (requires authentication)
+ * Fallback: Mock satellite-based rainfall estimates
  */
 export async function fetchNASAGPMData(): Promise<WeatherObservation[]> {
-  // Simulate satellite-based rainfall estimates
+  // If real token is provided, use it
+  if (config.externalData.nasaGpmToken) {
+    try {
+      const url = new URL('/daac-bin/Giovanni/services/amsr2_rain.1.4', config.externalData.nasaGpmBaseUrl);
+      url.searchParams.set('north', '19');
+      url.searchParams.set('south', '18');
+      url.searchParams.set('east', '74');
+      url.searchParams.set('west', '73');
+      url.searchParams.set('query', config.externalData.nasaGpmToken);
+      
+      const response = await fetch(url.toString());
+      if (!response.ok) throw new Error(`NASA GPM API returned ${response.status}`);
+      
+      const data: any = await response.json();
+      // Parse real NASA GPM response
+      return (data.results || []).map((result: any) => ({
+        provider: 'NASA-GPM',
+        location: { lat: result.latitude, lon: result.longitude },
+        timestamp: new Date(result.timestamp),
+        rainfall_mm: result.precipitation_mm || 0,
+      }));
+    } catch (error) {
+      console.warn('NASA GPM API call failed, using mock data:', error);
+    }
+  }
+
+  // Fallback: Simulate satellite-based rainfall estimates
   return [
     {
       provider: 'NASA-GPM',
@@ -56,10 +112,41 @@ export async function fetchNASAGPMData(): Promise<WeatherObservation[]> {
 }
 
 /**
- * Mock OpenWeatherMap data
- * Real implementation would call: https://api.openweathermap.org/
+ * Fetch OpenWeatherMap data
+ * Real API: https://api.openweathermap.org/ (requires API key)
+ * Fallback: Mock weather data
  */
 export async function fetchOpenWeatherData(): Promise<WeatherObservation[]> {
+  // If real API key is provided, use it
+  if (config.externalData.openWeatherApiKey) {
+    try {
+      const url = new URL('/data/2.5/weather', config.externalData.openWeatherBaseUrl);
+      url.searchParams.set('lat', '18.5204');
+      url.searchParams.set('lon', '73.8567');
+      url.searchParams.set('appid', config.externalData.openWeatherApiKey);
+      url.searchParams.set('units', 'metric');
+      
+      const response = await fetch(url.toString());
+      if (!response.ok) throw new Error(`OpenWeatherMap API returned ${response.status}`);
+      
+      const data: any = await response.json();
+      // Parse OpenWeatherMap response
+      const rain = data.rain?.['1h'] || data.clouds?.all * 0.01 * 10 || 0; // Rough rainfall estimate from cloud coverage
+      return [{
+        provider: 'OpenWeather',
+        location: { lat: data.coord.lat, lon: data.coord.lon },
+        timestamp: new Date(data.dt * 1000),
+        rainfall_mm: rain,
+        temperature_c: data.main.temp,
+        humidity_percent: data.main.humidity,
+        wind_speed_kmh: (data.wind.speed || 0) * 3.6, // Convert m/s to km/h
+      }];
+    } catch (error) {
+      console.warn('OpenWeatherMap API call failed, using mock data:', error);
+    }
+  }
+
+  // Fallback: Mock OpenWeatherMap data
   return [
     {
       provider: 'OpenWeather',

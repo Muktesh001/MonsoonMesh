@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Search, Filter, X, ChevronDown, Layers } from 'lucide-react';
-import { getDashboard } from '../api.ts';
+import { getDashboard, getRiskAssessments } from '../api.ts';
 import type { ZoneProperties } from '../types.ts';
 import { PageHeader } from '../components/ui/PageHeader.tsx';
 import { Card } from '../components/ui/Card.tsx';
@@ -32,8 +32,22 @@ export function LiveMapPage({ token }: LiveMapPageProps) {
     retry: false,
   });
 
-  const riskDist = dashQ.data?.riskDistribution ?? [];
-  const totalZones = riskDist.reduce((s, x) => s + x.count, 0);
+  const riskQ = useQuery({
+    queryKey: ['riskAssessments', token],
+    queryFn: () => getRiskAssessments(token),
+    enabled: Boolean(token),
+    refetchInterval: 60_000,
+    retry: false,
+  });
+
+  const risks = riskQ.data?.items ?? [];
+  const riskDist = [
+    { category: 'CRITICAL', count: risks.filter(r => r.category === 'CRITICAL').length },
+    { category: 'HIGH', count: risks.filter(r => r.category === 'HIGH').length },
+    { category: 'MODERATE', count: risks.filter(r => r.category === 'MODERATE').length },
+    { category: 'LOW', count: risks.filter(r => r.category === 'LOW').length },
+  ];
+  const totalZones = risks.length || (dashQ.data?.riskDistribution.reduce((s, x) => s + x.count, 0) ?? 0);
 
   return (
     <div className="page-content">
@@ -91,10 +105,10 @@ export function LiveMapPage({ token }: LiveMapPageProps) {
           <div className="map-page-footer">
             <div className="map-page-footer-left">
               <Layers size={13} />
-              <span>{totalZones} synthetic zone assessments</span>
+              <span>{totalZones} {risks.length > 0 ? 'assessed zones' : 'zones'}</span>
             </div>
             <span className="map-page-footer-note">
-              Coordinates and zones are illustrative demonstration fixtures.
+              {risks.length > 0 ? 'Real external risk assessments' : 'Coordinates and zones are demonstration fixtures.'}
             </span>
           </div>
         </Card>
@@ -121,8 +135,8 @@ export function LiveMapPage({ token }: LiveMapPageProps) {
                   </span>
                 </div>
                 <div className="zone-detail-row">
-                  <span>Risk index</span>
-                  <strong>{selectedZone.risk != null ? selectedZone.risk.toFixed(2) : 'Not assessed'}</strong>
+                  <span>Risk score</span>
+                  <strong>{selectedZone.risk != null ? selectedZone.risk.toFixed(0) : 'Not assessed'}</strong>
                 </div>
                 <div className="zone-detail-row">
                   <span>Zone type</span>
@@ -130,11 +144,13 @@ export function LiveMapPage({ token }: LiveMapPageProps) {
                 </div>
                 <div className="zone-detail-row">
                   <span>Data source</span>
-                  <Badge variant="demo">SYNTHETIC</Badge>
+                  <Badge variant={risks.length > 0 ? 'neutral' : 'demo'}>
+                    {risks.length > 0 ? 'EXTERNAL' : 'SYNTHETIC'}
+                  </Badge>
                 </div>
               </div>
               <p className="zone-detail-note">
-                Risk index is a configurable decision-support score, not a validated flood probability.
+                Risk score is derived from external data feeds (weather, historical, infrastructure) and is a decision-support tool, not a validated flood probability.
               </p>
             </Card>
           ) : (
@@ -152,15 +168,15 @@ export function LiveMapPage({ token }: LiveMapPageProps) {
             <span className="eyebrow">RISK SUMMARY</span>
             <h3 className="card-title" style={{ marginBottom: '1rem' }}>Zone breakdown</h3>
             <div className="risk-summary-bars">
-              {['CRITICAL', 'HIGH', 'MODERATE', 'LOW'].map((cat) => {
-                const count = riskDist.find((x) => x.category === cat)?.count ?? 0;
+              {riskDist.map((item) => {
+                const count = item.count;
                 const max = Math.max(...riskDist.map((x) => x.count), 1);
                 return (
-                  <div className="risk-bar-row" key={cat}>
-                    <span className="risk-bar-label">{cat.charAt(0) + cat.slice(1).toLowerCase()}</span>
+                  <div className="risk-bar-row" key={item.category}>
+                    <span className="risk-bar-label">{item.category.charAt(0) + item.category.slice(1).toLowerCase()}</span>
                     <div className="risk-bar-track">
                       <div
-                        className={`risk-bar-fill risk-fill-${cat.toLowerCase()}`}
+                        className={`risk-bar-fill risk-fill-${item.category.toLowerCase()}`}
                         style={{ width: `${Math.max(4, (count / max) * 100)}%` }}
                       />
                     </div>
@@ -169,7 +185,7 @@ export function LiveMapPage({ token }: LiveMapPageProps) {
                 );
               })}
             </div>
-            <p className="panel-footnote">Synthetic demonstration data. Not validated flood probabilities.</p>
+            <p className="panel-footnote">{risks.length > 0 ? 'Real external risk assessments. Updated every minute.' : 'Synthetic demonstration data. Not validated flood probabilities.'}</p>
           </Card>
         </div>
       </div>

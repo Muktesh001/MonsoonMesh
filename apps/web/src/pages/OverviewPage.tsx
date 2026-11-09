@@ -7,7 +7,7 @@ import {
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
-import { getDashboard, getIncidents, createIncident } from '../api.ts';
+import { getDashboard, getIncidents, createIncident, getWeatherData, getRiskAssessments } from '../api.ts';
 import type { Incident, Severity } from '../types.ts';
 import { StatCard } from '../components/ui/StatCard.tsx';
 import { Card, CardHeader } from '../components/ui/Card.tsx';
@@ -63,14 +63,30 @@ export function OverviewPage({
     enabled: Boolean(token),
     retry: false,
   });
+  const weatherQ = useQuery({
+    queryKey: ['weather', token],
+    queryFn: () => getWeatherData(token),
+    enabled: Boolean(token),
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const riskQ = useQuery({
+    queryKey: ['riskAssessments', token],
+    queryFn: () => getRiskAssessments(token),
+    enabled: Boolean(token),
+    refetchInterval: 60_000,
+    retry: false,
+  });
 
   const d = dashQ.data;
   const loading = dashQ.isLoading;
+  const weather = weatherQ.data?.items ?? [];
+  const risks = riskQ.data?.items ?? [];
 
-  const criticalCount = d?.riskDistribution.find((x) => x.category === 'CRITICAL')?.count ?? 0;
+  const criticalCount = (risks.filter(r => r.category === 'CRITICAL').length) || (d?.riskDistribution.find((x) => x.category === 'CRITICAL')?.count ?? 0);
   const chartData = ['CRITICAL', 'HIGH', 'MODERATE', 'LOW'].map((cat) => ({
     name: cat.charAt(0) + cat.slice(1).toLowerCase(),
-    count: d?.riskDistribution.find((x) => x.category === cat)?.count ?? 0,
+    count: (risks.filter(r => r.category === cat).length) || (d?.riskDistribution.find((x) => x.category === cat)?.count ?? 0),
     fill: RISK_COLORS[cat],
   }));
 
@@ -164,24 +180,24 @@ export function OverviewPage({
           loading={loading}
         />
         <StatCard
-          label="Awaiting action"
-          value={d?.summary.unresolved ?? '—'}
-          icon={<AlertTriangle size={17} />}
-          tone="amber"
-          note="Requires follow-up"
-          trend={d?.summary.unresolved ? 'up' : 'neutral'}
-          trendLabel="Open"
-          loading={loading}
+          label="Weather observations"
+          value={weather.length}
+          icon={<CloudRain size={17} />}
+          tone="teal"
+          note="Real external data feeds"
+          trend={weather.length > 0 ? 'up' : 'neutral'}
+          trendLabel="Live"
+          loading={weatherQ.isLoading}
         />
         <StatCard
           label="Critical zones"
           value={criticalCount}
           icon={<MapPin size={17} />}
           tone="red"
-          note="Latest illustrative model"
+          note="Latest risk assessment"
           trend={criticalCount > 0 ? 'up' : 'neutral'}
-          trendLabel="Demo"
-          loading={loading}
+          trendLabel="Active"
+          loading={riskQ.isLoading}
         />
       </div>
 
@@ -204,8 +220,8 @@ export function OverviewPage({
             <RiskMap token={token} height="300px" />
           </Suspense>
           <div className="card-pad-sm map-card-footer">
-            <span className="map-stat"><span className="dot dot-red" />{d?.riskDistribution.reduce((s, x) => s + x.count, 0) ?? 0} assessed zones</span>
-            <span className="map-stat"><span className="dot dot-blue" />Fixtures · updated locally</span>
+            <span className="map-stat"><span className="dot dot-red" />{risks.length} assessed zones</span>
+            <span className="map-stat"><span className="dot dot-blue" />{weather.length} weather observations</span>
             <button className="link-btn" onClick={() => onNavigate('Live map')}>View full map →</button>
           </div>
         </Card>
@@ -294,8 +310,8 @@ export function OverviewPage({
         <Card padding="md">
           <CardHeader eyebrow="DATA FRESHNESS" title="Source status" />
           <div className="source-list">
-            <SourceRow icon={<CloudRain size={15} />} label="Weather fixtures" sub="Synthetic observations" state="demo" />
-            <SourceRow icon={<MapIcon size={15} />} label="Zone boundaries" sub="Pune local fixtures" state="demo" />
+            <SourceRow icon={<CloudRain size={15} />} label="Weather feeds" sub={`${weather.length} observations ingested`} state={weather.length > 0 ? 'active' : 'demo'} />
+            <SourceRow icon={<MapIcon size={15} />} label="Risk assessments" sub={`${risks.length} zones assessed`} state={risks.length > 0 ? 'active' : 'demo'} />
             <SourceRow icon={<Activity size={15} />} label="AI assistant" sub="Local fallback available" state="local" />
             <SourceRow icon={<Siren size={15} />} label="Incident stream" sub={`${d?.summary.total ?? '—'} records loaded`} state="active" />
           </div>

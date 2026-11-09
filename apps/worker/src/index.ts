@@ -1,8 +1,6 @@
 import 'dotenv/config';
 import { Worker, Queue } from 'bullmq';
 import pg from 'pg';
-import { ingestAllWeatherData } from '../../../apps/api/src/services/weather-adapter.js';
-import { assessZoneRisks } from '../../../apps/api/src/services/risk-data-adapter.js';
 
 const redisUrl = new URL(process.env.REDIS_URL ?? 'redis://localhost:6379');
 const connection = {
@@ -13,6 +11,7 @@ const connection = {
   maxRetriesPerRequest: null,
 };
 const database = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? 'postgres://monsoonmesh:monsoonmesh@localhost:5432/monsoonmesh' });
+const apiUrl = process.env.API_URL ?? 'http://localhost:4000/api';
 const aiServiceUrl = process.env.AI_SERVICE_URL ?? 'http://localhost:8000';
 const queue = new Queue('monsoonmesh-events', { connection });
 
@@ -43,20 +42,40 @@ const worker = new Worker('monsoonmesh-events', async (job) => {
     return { fixtureRecorded: true };
   }
   if (job.name === 'ingest-weather-data') {
-    const count = await ingestAllWeatherData();
-    const { rows } = await database.query(`SELECT id FROM data_sources WHERE provider_key IN ('imd', 'nasa-gpm', 'openweather') LIMIT 1`);
-    if (rows[0]) {
-      await database.query(
-        `INSERT INTO ingestion_runs(source_id,status,started_at,completed_at,records_written,metadata)
-         VALUES($1,'SUCCEEDED',now(),now(),$2,'{"mode":"external-weather-feed"}'::jsonb)`,
-        [rows[0].id, count],
-      );
+    try {
+      const adminToken = process.env.ADMIN_TOKEN || 'internal-worker-token';
+      const response = await fetch(`${apiUrl}/data/ingest-weather`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminToken}`,
+        },
+      });
+      if (!response.ok) throw new Error(`API returned ${response.status}`);
+      const result: any = await response.json();
+      return { weatherRecordsIngested: result.recordsIngested, message: result.message };
+    } catch (error) {
+      console.error('Weather ingestion failed:', error);
+      throw error;
     }
-    return { weatherRecordsIngested: count };
   }
   if (job.name === 'assess-external-risks') {
-    const assessments = await assessZoneRisks();
-    return { risksAssessed: assessments.length };
+    try {
+      const adminToken = process.env.ADMIN_TOKEN || 'internal-worker-token';
+      const response = await fetch(`${apiUrl}/data/assess-risks`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminToken}`,
+        },
+      });
+      if (!response.ok) throw new Error(`API returned ${response.status}`);
+      const result: any = await response.json();
+      return { risksAssessed: result.zones?.length || 0, message: result.message };
+    } catch (error) {
+      console.error('Risk assessment failed:', error);
+      throw error;
+    }
   }
   throw new Error(`Unsupported event type: ${job.name}`);
 }, { connection, concurrency: 3 });
@@ -89,25 +108,36 @@ void pollOutbox();
 
 // Schedule periodic data ingestion jobs
 async function schedulePeriodicJobs(): Promise<void> {
-  // Ingest weather data every 5 minutes
-  setInterval(() => {
-    void queue.add('ingest-weather-data', {}, { 
+  // Check if jobs are already scheduled
+  const weatherJobKey = 'weather-ingestion-recurring';
+  const riskJobKey = 'risk-assessment-recurring';
+
+  try {
+    // Remove any existing recurring jobs
+    const existingWeatherJob = await queue.getJob(weatherJobKey);
+    if (existingWeatherJob) await existingWeatherJob.remove();
+    
+    const existingRiskJob = await queue.getJob(riskJobKey);
+    if (existingRiskJob) await existingRiskJob.remove();
+
+    // Schedule weather ingestion every 5 minutes
+    await queue.add('ingest-weather-data', {}, { 
       repeat: { every: 300_000 }, // 5 minutes
-      jobId: 'weather-ingestion-recurring',
-      removeOnComplete: 5000,
+      jobId: weatherJobKey,
+      removeOnComplete: { age: 3600 }, // Keep completed jobs for 1 hour
     });
-  }, 300_000);
 
-  // Assess risks every 10 minutes
-  setInterval(() => {
-    void queue.add('assess-external-risks', {}, { 
+    // Schedule risk assessment every 10 minutes
+    await queue.add('assess-external-risks', {}, { 
       repeat: { every: 600_000 }, // 10 minutes
-      jobId: 'risk-assessment-recurring',
-      removeOnComplete: 5000,
+      jobId: riskJobKey,
+      removeOnComplete: { age: 3600 }, // Keep completed jobs for 1 hour
     });
-  }, 600_000);
 
-  console.log('Periodic jobs scheduled: weather ingestion (5m), risk assessment (10m)');
+    console.log('✓ Periodic jobs scheduled: weather ingestion (5m), risk assessment (10m)');
+  } catch (error) {
+    console.error('Failed to schedule periodic jobs:', error);
+  }
 }
 
 void schedulePeriodicJobs();
